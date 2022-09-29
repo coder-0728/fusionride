@@ -9,6 +9,7 @@ set(
     SOURCES
         ${PROJECT_SOURCE_DIR}/logic/mec-adapter/src/MECAdapter.cpp
         ${PROJECT_SOURCE_DIR}/logic/mec-adapter/src/libemqtt.cpp
+        ${PROJECT_SOURCE_DIR}/logic/mec-adapter/src/MECAdapter_conf.cpp
 )
 
 # Specify executable program output path

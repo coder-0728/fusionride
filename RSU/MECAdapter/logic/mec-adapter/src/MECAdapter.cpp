@@ -44,51 +44,33 @@ uint8_t packet_buffer[RCVBUFSIZE];
 int keepalive = 10;
 mqtt_broker_handle_t broker;
 
-int socket_id;
+MECAdapter *MECAdapter::mec_ad = NULL;
 
-int Port;
-string IP;
+MECAdapter::MECAdapter(){
 
-// 读配置文件
-void Parse(const char *json_str)
+};
+MECAdapter::~MECAdapter(){
+
+};
+
+//单例
+MECAdapter *MECAdapter::GetInstance()
 {
-
-	rapidjson::Document doc;
-	//首先进行解析，没有解析错误才能进行具体字段的解析
-	if (!doc.Parse(json_str).HasParseError())
+	if (mec_ad == NULL)
 	{
-		if (doc.HasMember("Port") && doc["Port"].IsInt())
-		{
-			Port = doc["Port"].GetInt();
-		}
-		if (doc.HasMember("IP") && doc["IP"].IsString())
-		{
-			IP = doc["IP"].GetString();
-		}
+		mec_ad = new MECAdapter();
 	}
+
+	return mec_ad;
 }
 
-string ReadConf(string &json)
+void MECAdapter::DestoryInstance()
 {
-
-	FILE *conf_fd = fopen("../config/mec_adapter_conf.json", "rb");
-	if (!conf_fd)
+	if (mec_ad != NULL)
 	{
-		cout << "open mec_adapter conf file error!" << endl;
-		return NULL;
+		delete mec_ad;
+		mec_ad = NULL;
 	}
-
-	if (conf_fd)
-	{
-		char *buf = new char[RCVBUFSIZE];
-		int n = fread(buf, 1, RCVBUFSIZE, conf_fd); // 将读取的内容转换为dom元素
-		fclose(conf_fd);
-		if (n >= 0)
-			json.append(buf, 0, n);
-		delete[] buf;
-		buf = nullptr;
-	}
-	return json;
 }
 
 int MECAdapter::uds_socket_server(const char *filename)
@@ -194,16 +176,18 @@ int send_packet(void *socket_info, const void *buf, unsigned int count)
 	return send(fd, buf, count, 0);
 }
 
-int init_socket(mqtt_broker_handle_t *broker, const char *hostname, short port, int keepalive)
+int MECAdapter::init_socket(mqtt_broker_handle_t *broker, const char *hostname, short port, int keepalive)
 {
+	MECAdapter *mec_ad = NULL;
+	mec_ad = MECAdapter::GetInstance();
 	int flag = 1;
 
 	// Create the socket
-	if ((socket_id = socket(PF_INET, SOCK_STREAM, 0)) < 0)
+	if ((mec_ad->socket_id = socket(PF_INET, SOCK_STREAM, 0)) < 0)
 		return -1;
 
 	// Disable Nagle Algorithm
-	if (setsockopt(socket_id, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(flag)) < 0)
+	if (setsockopt(mec_ad->socket_id, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(flag)) < 0)
 		return -2;
 
 	struct sockaddr_in socket_address;
@@ -213,25 +197,27 @@ int init_socket(mqtt_broker_handle_t *broker, const char *hostname, short port, 
 	socket_address.sin_addr.s_addr = inet_addr(hostname);
 
 	// Connect the socket
-	if ((connect(socket_id, (struct sockaddr *)&socket_address, sizeof(socket_address))) < 0)
+	if ((connect(mec_ad->socket_id, (struct sockaddr *)&socket_address, sizeof(socket_address))) < 0)
 		return -1;
 
 	// MQTT stuffs
 	mqtt_set_alive(broker, keepalive);
-	broker->socket_info = (void *)&socket_id;
+	broker->socket_info = (void *)&mec_ad->socket_id;
 	broker->send = send_packet;
 
 	return 0;
 }
 
-int close_socket(mqtt_broker_handle_t *broker)
+int MECAdapter::close_socket(mqtt_broker_handle_t *broker)
 {
 	int fd = *((int *)broker->socket_info);
 	return close(fd);
 }
 
-int read_packet(int timeout)
+int MECAdapter::read_packet(int timeout)
 {
+	MECAdapter *mec_ad = NULL;
+	mec_ad = MECAdapter::GetInstance();
 	if (timeout > 0)
 	{
 		fd_set readfds;
@@ -239,7 +225,7 @@ int read_packet(int timeout)
 
 		// Initialize the file descriptor set
 		FD_ZERO(&readfds);
-		FD_SET(socket_id, &readfds);
+		FD_SET(mec_ad->socket_id, &readfds);
 
 		// Initialize the timeout data structure
 		tmv.tv_sec = timeout;
@@ -253,7 +239,7 @@ int read_packet(int timeout)
 	int total_bytes = 0, bytes_rcvd, packet_length;
 	memset(packet_buffer, 0, sizeof(packet_buffer));
 
-	if ((bytes_rcvd = recv(socket_id, (packet_buffer + total_bytes), RCVBUFSIZE, 0)) <= 0)
+	if ((bytes_rcvd = recv(mec_ad->socket_id, (packet_buffer + total_bytes), RCVBUFSIZE, 0)) <= 0)
 	{
 		return -1;
 	}
@@ -273,7 +259,7 @@ int read_packet(int timeout)
 
 	while (total_bytes < packet_length) // Reading the packet
 	{
-		if ((bytes_rcvd = recv(socket_id, (packet_buffer + total_bytes), RCVBUFSIZE, 0)) <= 0)
+		if ((bytes_rcvd = recv(mec_ad->socket_id, (packet_buffer + total_bytes), RCVBUFSIZE, 0)) <= 0)
 			return -1;
 		total_bytes += bytes_rcvd; // Keep tally of total bytes
 	}
@@ -298,32 +284,36 @@ void alive(int sig)
 
 void term(int sig)
 {
+	MECAdapter *mec_ad = NULL;
+	mec_ad = MECAdapter::GetInstance();
 	cout << "Goodbye!" << endl;
 	// DISCONNECT
 	mqtt_disconnect(&broker);
-	close_socket(&broker);
+	mec_ad->close_socket(&broker);
 
 	exit(0);
 }
 
 int main()
 {
+	MECAdapter *mec_ad = NULL;
+	mec_ad = MECAdapter::GetInstance();
 	uint8_t topic[255], msg[RCVBUFSIZE];
 	int packet_length;
 	uint16_t msg_id, msg_id_rcv;
 
 	string conf_json;
-	ReadConf(conf_json);
-	Parse(conf_json.c_str());
+	mec_ad->ReadConf(conf_json);
+	mec_ad->Parse(conf_json.c_str());
 
 	mqtt_init(&broker, "client-id");
-	int mqtt_ret = init_socket(&broker, IP.c_str(), Port, keepalive);
+	int mqtt_ret = mec_ad->init_socket(&broker, mec_ad->IP.c_str(), mec_ad->Port, keepalive);
 	while (1)
 	{
 		if (mqtt_ret < 0)
 		{
 			cout << "connect MQTT-Server failed, try again……" << endl;
-			mqtt_ret = init_socket(&broker, IP.c_str(), Port, keepalive);
+			mqtt_ret = mec_ad->init_socket(&broker, mec_ad->IP.c_str(), mec_ad->Port, keepalive);
 			sleep(5);
 		}
 		else
@@ -338,7 +328,7 @@ int main()
 
 	mqtt_connect(&broker);
 
-	packet_length = read_packet(1);
+	packet_length = mec_ad->read_packet(1);
 	if (packet_length < 0)
 	{
 		cout << "Error(%d) on read packet!" << packet_length << endl;
@@ -366,7 +356,7 @@ int main()
 	// >>>>> SUBSCRIBE
 	mqtt_subscribe(&broker, "rsu/#", &msg_id);
 	// <<<<< SUBACK
-	packet_length = read_packet(1);
+	packet_length = mec_ad->read_packet(1);
 	if (packet_length < 0)
 	{
 		cout << "Error(%d) on read packet!" << packet_length << endl;
@@ -399,7 +389,7 @@ int main()
 
 	while (1)
 	{
-		packet_length = read_packet(0);
+		packet_length = mec_ad->read_packet(0);
 		if (packet_length == -1)
 		{
 			cout << "Error(" << packet_length << ") on read packet!" << endl;
