@@ -18,3 +18,4 @@ set(SOURCES_FILES src/Heartbeat.cpp
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/output/)
 add_executable(${PROJECT_NAME} ${SOURCES_FILES})
 
+
